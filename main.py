@@ -12,9 +12,51 @@ from streamlit_folium import st_folium
 
 
 # =========================================================
-#  PREDEFINED AREAS OF INTEREST (AOIs) – used as "recent searches"
-#  Each has only name + center; sub-zones are generated procedurally.
-#  All centers are in forest / natural areas (not dense city centres).
+#  BASIC AUTH USING st.secrets
+# =========================================================
+
+def check_credentials(username: str, password: str) -> bool:
+    """Check username/password against secrets."""
+    try:
+        expected_user = st.secrets["auth"]["username"]
+        expected_pass = st.secrets["auth"]["password"]
+    except Exception:
+        st.error("Authentication configuration is missing in secrets.")
+        return False
+
+    return (username == expected_user) and (password == expected_pass)
+
+
+def login_page():
+    st.set_page_config(page_title="Wildfire Risk Assessment Dashboard", layout="wide")
+    st.title("Wildfire Risk Assessment Dashboard")
+
+    st.markdown("### Login")
+
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input("User")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+
+    if submit:
+        if check_credentials(username, password):
+            st.session_state.authenticated = True
+            st.session_state.user = username
+            st.success("Login successful.")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid credentials. Please try again.")
+
+    st.stop()
+
+
+# Gate everything behind login
+if "authenticated" not in st.session_state or not st.session_state.authenticated:
+    login_page()
+
+
+# =========================================================
+#  PREDEFINED AREAS OF INTEREST (AOIs) – “recent searches”
 # =========================================================
 
 WILDFIRE_AOIS = {
@@ -225,10 +267,6 @@ def build_irregular_blob_polygon(
 def build_subzones_geojson(region_key: str, max_radius_km: float = 30.0) -> dict:
     """
     Non-overlapping irregular sub-zones around AOI center.
-
-    - Number of subzones per AOI: random 3–6 (deterministic per key).
-    - Risk level per subzone: random among Low/Mid/High.
-    - Centroids spaced angularly; blobs small enough not to overlap.
     """
     region = WILDFIRE_AOIS[region_key]
     center = region["center"]
@@ -336,7 +374,7 @@ def estimate_zoom(radius_km: float) -> int:
 
 
 # =========================================================
-#  UI – MAIN APP
+#  MAIN APP (user already authenticated)
 # =========================================================
 
 st.title("Wildfire Risk Assessment Dashboard")
@@ -377,17 +415,16 @@ search_button = st.sidebar.button("Update ROI from search")
 
 st.sidebar.caption(
     "Location search powered by OpenStreetMap (Nominatim). "
-    "In production, this could be replaced by the geocoding service used by the system."
+    "In production, this would be replaced by the project's geocoding service."
 )
 
 if search_button and search_query.strip():
     location = geocode(search_query)
     if location is not None:
-        # Simulate engine loading before updating view
         simulate_loading("Running wildfire risk engine for new ROI...")
         st.session_state.center_lat = location.latitude
         st.session_state.center_lon = location.longitude
-        st.session_state.selected_aoi_key = None  # no AOI, pure free ROI
+        st.session_state.selected_aoi_key = None
     else:
         st.sidebar.error("Location not found. Please refine your search.")
 
@@ -410,7 +447,6 @@ selected_aoi_option = st.sidebar.selectbox(
 
 new_aoi_key = None if selected_aoi_option == "(none)" else selected_aoi_option
 
-# Detect AOI change and simulate loading
 if new_aoi_key != old_aoi_key:
     st.session_state.selected_aoi_key = new_aoi_key
     if new_aoi_key is not None:
@@ -424,7 +460,7 @@ center_lat = st.session_state.center_lat
 center_lon = st.session_state.center_lon
 
 # ---------------------------------------------------------
-#  Risk query for current ROI (irrespective of AOI or free search)
+#  Risk query for current ROI
 # ---------------------------------------------------------
 risk_result = query_risk_from_db(
     center_lat=center_lat,
@@ -448,7 +484,6 @@ zoom = estimate_zoom(radius_km)
 
 map_col, info_col = st.columns((2.2, 1.8))
 
-# ----------------- MAP COLUMN -----------------
 with map_col:
     st.subheader("Map & overlays")
 
@@ -459,17 +494,14 @@ with map_col:
         locate_control=False,
     )
 
-    # Terrain-like basemap
     m.add_basemap("OpenTopoMap")
 
-    # ROI outline
     m.add_geojson(
         geojson_roi,
         layer_name="ROI",
         style_function=roi_style_function,
     )
 
-    # If AOI selected, render irregular risk patches (in natural areas)
     subzones_geojson = None
     if st.session_state.selected_aoi_key is not None:
         subzones_geojson = build_subzones_geojson(st.session_state.selected_aoi_key, max_radius_km=30.0)
@@ -493,7 +525,6 @@ with map_col:
             "Use the search bar or pick a recent AOI to explore different areas."
         )
 
-    # Satellite imagery placeholder
     st.subheader("Satellite imagery")
     if risk_result["sat_image"]:
         caption_location = (
@@ -510,7 +541,6 @@ with map_col:
         st.info("No satellite imagery available for this ROI.")
 
 
-# ----------------- INFO COLUMN -----------------
 with info_col:
     st.subheader("Risk assessment")
 
@@ -523,7 +553,6 @@ with info_col:
         value=risk_result["risk_level"],
     )
 
-    # If AOI selected, show subzones + drivers/actions by risk level
     if st.session_state.selected_aoi_key is not None and subzones_geojson is not None:
         st.markdown("**Risk subzones in current AOI**")
 
@@ -549,7 +578,6 @@ with info_col:
                 for a in ACTIONS_BY_LEVEL[lvl]:
                     st.markdown(f"- {a}")
     else:
-        # Free ROI only: global drivers/actions
         with st.expander("Main drivers", expanded=False):
             for d in risk_result["drivers"]:
                 st.markdown(f"- {d}")
