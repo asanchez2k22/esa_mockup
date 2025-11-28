@@ -395,6 +395,15 @@ scenario = st.sidebar.selectbox(
     options=["Current conditions", "48h forecast", "7-day outlook"],
 )
 
+# Basemap selection
+basemap_option = st.sidebar.selectbox(
+    "Basemap",
+    options=[
+        "CartoDB.Voyager (streets)",
+        "Esri.WorldImagery (satellite)",
+    ],
+)
+
 # Session state defaults for current ROI center (use Montseny as non-urban default)
 if "center_lat" not in st.session_state:
     st.session_state.center_lat = WILDFIRE_AOIS["montseny"]["center"]["lat"]
@@ -494,17 +503,25 @@ with map_col:
         locate_control=False,
     )
 
-    m.add_basemap("OpenTopoMap")
+    # Basemap selection logic
+    if "CartoDB.Voyager" in basemap_option:
+        m.add_basemap("CartoDB.Voyager")
+    else:
+        m.add_basemap("Esri.WorldImagery")
 
+    # ROI outline
     m.add_geojson(
         geojson_roi,
         layer_name="ROI",
         style_function=roi_style_function,
     )
 
+    # Risk patches only for AOIs
     subzones_geojson = None
     if st.session_state.selected_aoi_key is not None:
-        subzones_geojson = build_subzones_geojson(st.session_state.selected_aoi_key, max_radius_km=30.0)
+        subzones_geojson = build_subzones_geojson(
+            st.session_state.selected_aoi_key, max_radius_km=30.0
+        )
         m.add_geojson(
             subzones_geojson,
             layer_name="Risk subzones",
