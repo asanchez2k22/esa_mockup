@@ -241,14 +241,40 @@ def build_irregular_blob_polygon(
     num_vertices: int,
     rng: random.Random,
 ):
-    """Irregular polygon around a local centroid (organic shape)."""
+    """
+    Irregular polygon around a local centroid with smooth contour (no star-shape).
+
+    - Angles: uniformly spaced (no angular jitter).
+    - Radii: random around base_radius_km, then smoothed with neighbour averaging.
+    """
+    # 1) Generamos radios con ruido
+    raw_radii = [
+        base_radius_km + rng.uniform(-jitter_km, jitter_km)
+        for _ in range(num_vertices)
+    ]
+
+    # 2) Suavizado simple (media de vecinos). Dos pasadas para más suavidad.
+    def smooth(radii):
+        n = len(radii)
+        smoothed = []
+        for i in range(n):
+            r_prev = radii[(i - 1) % n]
+            r_curr = radii[i]
+            r_next = radii[(i + 1) % n]
+            smoothed.append((r_prev + r_curr + r_next) / 3.0)
+        return smoothed
+
+    radii = smooth(raw_radii)
+    radii = smooth(radii)  # segunda pasada de suavizado
+
     coords = []
     lat_center_rad = math.radians(center_lat)
 
     for i in range(num_vertices):
-        theta = 2.0 * math.pi * i / num_vertices + rng.uniform(-0.2, 0.2)
-        r_km = base_radius_km + rng.uniform(-jitter_km, jitter_km)
-        r_km = max(r_km, 0.5)
+        # ángulos uniformes
+        theta = 2.0 * math.pi * i / num_vertices
+
+        r_km = max(radii[i], 0.5)  # evitamos radios demasiado pequeños
 
         lat_radius_deg = r_km / 111.0
         lon_radius_deg = r_km / (111.0 * math.cos(lat_center_rad))
@@ -260,6 +286,7 @@ def build_irregular_blob_polygon(
         lon = center_lon + dlon
         coords.append([lon, lat])
 
+    # cerrar polígono
     coords.append(coords[0])
     return coords
 
@@ -301,8 +328,8 @@ def build_subzones_geojson(region_key: str, max_radius_km: float = 30.0) -> dict
         centroid_lon = center_lon + dlon_centroid_deg
 
         base_radius_km = rng.uniform(2.0, 4.0)
-        jitter_km = rng.uniform(0.5, 1.5)
-        num_vertices = rng.randint(7, 11)
+        jitter_km = rng.uniform(0.3, 0.7)  # menos variación → contorno más suave
+        num_vertices = rng.randint(30, 45)  # muchas caras, pero suavizadas
 
         polygon = build_irregular_blob_polygon(
             center_lat=centroid_lat,
